@@ -1,0 +1,23 @@
+# The build context only needs the Go module. Everything else either bloats the
+# upload or is rebuilt inside CI anyway.
+.git
+.github
+.gitignore
+
+# The local binary and the image output are not inputs.
+proxyjoss
+
+# The Worker is deployed by wrangler, not baked into the Go image.
+worker
+
+# Test and tooling scratch.
+scripts
+README.md
+LICENSE
+config.example.json
+Dockerfile
+.dockerignore
+
+**/*_test.go
+**/node_modules
+**/.wrangler

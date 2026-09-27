@@ -1,0 +1,27 @@
+# The image is configured entirely by environment, so this file is a worked
+# example of the same contract the CI-built image expects. Nothing is baked in.
+#
+#   PROXYJOSS_UPSTREAM_WORKER_TOKEN=... docker compose up
+#
+services:
+  proxyjoss:
+    image: ghcr.io/kelvinzer0/proxyjoss:latest
+    # The Worker that carries the tunnel. Change this to your own.
+    environment:
+      PROXYJOSS_LISTEN_ADDR: 0.0.0.0:8080
+      PROXYJOSS_ADMIN_ADDR: 0.0.0.0:9090
+      PROXYJOSS_UPSTREAM_MODE: worker
+      PROXYJOSS_UPSTREAM_WORKER_HOST: proxyjoss-tunnel.insidexofficial.workers.dev
+      PROXYJOSS_UPSTREAM_WORKER_EGRESS: direct
+      PROXYJOSS_UPSTREAM_WORKER_TOKEN: ${PROXYJOSS_UPSTREAM_WORKER_TOKEN:?set this to the Worker's TUNNEL_TOKEN}
+      # The backend domain used when probing entries, which has to be a domain
+      # the edge can serve. It is not the destination of any request.
+      PROXYJOSS_UPSTREAM_SNI: example.com
+      PROXYJOSS_UPSTREAM_DIAL_TIMEOUT: 4s
+      PROXYJOSS_UPSTREAM_MAX_ATTEMPTS: "12"
+      PROXYJOSS_HEALTH_ENABLED: "true"
+      PROXYJOSS_HEALTH_MODE: tls
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    restart: unless-stopped

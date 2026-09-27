@@ -144,6 +144,30 @@ curl -x http://global@127.0.0.1:8080 https://example.com
 curl --socks5-hostname country-ID:127.0.0.1:8080 https://example.com
 ```
 
+## Container
+
+The image is built from the same source and is configured entirely by
+environment, so no config file is needed inside the container.
+
+```bash
+docker run --rm -p 8080:8080 -p 9090:9090   -e PROXYJOSS_UPSTREAM_MODE=worker   -e PROXYJOSS_UPSTREAM_WORKER_HOST=proxyjoss-tunnel.insidexofficial.workers.dev   -e PROXYJOSS_UPSTREAM_WORKER_TOKEN=<the Workers TUNNEL_TOKEN>   -e PROXYJOSS_UPSTREAM_WORKER_EGRESS=direct   -e PROXYJOSS_UPSTREAM_SNI=example.com   -e PROXYJOSS_UPSTREAM_DIAL_TIMEOUT=4s   -e PROXYJOSS_UPSTREAM_MAX_ATTEMPTS=12   -e PROXYJOSS_HEALTH_ENABLED=true   ghcr.io/kelvinzer0/proxyjoss:latest
+```
+
+A `docker-compose.yml` is also shipped; it enforces the required token
+variable so you cannot forget it:
+
+```bash
+PROXYJOSS_UPSTREAM_WORKER_TOKEN=<token> docker compose up
+```
+
+The image is multi-arch (amd64, arm64), runs as non-root, and carries a
+built-in health check that hits the status API. Version stamping means
+`proxyjoss version` inside the container reports the tag the image was cut
+from, not a hard-coded string.
+
+Every field can be overridden at runtime by the same `PROXYJOSS_` variables,
+so the image works for any Worker, any feed, any selector.
+
 ## Selectors
 
 The proxy username chooses the egress. SOCKS5 uses the username field; HTTP

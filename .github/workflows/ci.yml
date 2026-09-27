@@ -1,0 +1,71 @@
+name: ci
+
+# The Worker tests and the Go tests are independent, so they run as separate
+# jobs: a change to the relay should not have to wait on the whole Go suite to
+# be told something passed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: make fmt-check
+
+      - name: vet
+        run: make vet
+
+      - name: build
+        run: make build
+
+      # The tunnel runs on two goroutines that share one socket, so the race
+      # detector is the check that would catch a relay bug rather than a test
+      # failure.
+      - name: test
+        run: make test
+
+      - name: race
+        run: make race
+
+      - name: example config still loads
+        run: ./proxyjoss check
+
+  worker:
+    name: worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # There is no lockfile, so the install is allowed to resolve, and the
+      # tests are what this job is actually about.
+      - name: install
+        run: bun install
+
+      - name: test
+        run: bun test
