@@ -1,0 +1,20 @@
+name = "proxyjoss-tunnel"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# The tunnel holds a Cloudflare TCP socket open per client connection. Workers
+# cap concurrent TCP connections per isolate, so keep the limit explicit rather
+# than discovering it in production.
+limits = { cpu_ms = 30000 }
+
+[observability]
+enabled = true
+
+# Secrets are set out of band, never committed:
+#   wrangler secret put TUNNEL_TOKEN
+#   wrangler secret put CONTROL_PLANE_TOKEN
+#
+# CONTROL_PLANE_URL is a plain var because it is not a secret.
+[vars]
+CONTROL_PLANE_URL = ""
+CONTROL_PLANE_TTL_MS = "30000"

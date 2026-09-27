@@ -1,0 +1,22 @@
+# Build artefacts
+/proxyjoss
+/dist/
+*.exe
+
+# Local configuration and secrets. config.example.json is the template to copy.
+config.json
+config.local.json
+*.local.json
+.env
+.env.*
+
+# Worker
+worker/node_modules/
+worker/.wrangler/
+worker/dev.vars
+worker/.dev.vars
+
+# Go coverage and profiling
+*.out
+*.test
+coverage.*

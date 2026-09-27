@@ -1,0 +1,50 @@
+{
+  "listen": {
+    "addr": "127.0.0.1:8080"
+  },
+  "source": {
+    "url": "https://raw.githubusercontent.com/papapapapdelesia/Emilia/main/Data/alive.txt",
+    "file": "",
+    "refresh_interval": "10m0s",
+    "timeout": "30s",
+    "user_agent": "proxyjoss/1.0 (+https://github.com/kelvinzer0/proxyjoss)"
+  },
+  "upstream": {
+    "mode": "auto",
+    "dial_timeout": "8s",
+    "handshake_timeout": "8s",
+    "max_attempts": 3,
+    "target": "",
+    "username": "",
+    "password": "",
+    "sni": "",
+    "user_agent": "proxyjoss"
+  },
+  "health": {
+    "enabled": true,
+    "interval": "2m0s",
+    "concurrency": 64,
+    "timeout": "8s",
+    "mode": "tcp",
+    "path": "/",
+    "failure_threshold": 2,
+    "cooldown": "5m0s",
+    "countries": null
+  },
+  "auth": {
+    "required": false,
+    "password": "",
+    "allow_anonymous": true,
+    "default_selector": "global"
+  },
+  "admin": {
+    "enabled": true,
+    "addr": "127.0.0.1:9090",
+    "control_token": ""
+  },
+  "isp_aliases": {},
+  "log": {
+    "level": "info",
+    "format": "text"
+  }
+}
