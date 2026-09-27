@@ -228,3 +228,81 @@ func TestDurationsRoundTrip(t *testing.T) {
 		t.Errorf("dial timeout = %s, want 1.5s", got)
 	}
 }
+
+func TestWorkerModeRequiresAConfiguredHop(t *testing.T) {
+	// A missing hop would otherwise only surface as a failed client request,
+	// long after startup reported a healthy process.
+	for name, mutate := range map[string]func(*Config){
+		"no host":  func(c *Config) { c.Upstream.Worker.Host = "" },
+		"no token": func(c *Config) { c.Upstream.Worker.Token = "" },
+		"host has a path": func(c *Config) {
+			c.Upstream.Worker.Host = "tunnel.example.workers.dev/tunnel"
+		},
+		"host has a port": func(c *Config) {
+			c.Upstream.Worker.Host = "tunnel.example.workers.dev:8787"
+		},
+	} {
+		cfg := Default()
+		cfg.Upstream.Mode = upstream.ModeWorker
+		cfg.Upstream.Worker = Worker{Host: "tunnel.example.workers.dev", Token: "secret"}
+		mutate(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("worker mode accepted a config with %s", name)
+		}
+	}
+}
+
+func TestWorkerModeAcceptsAFullHop(t *testing.T) {
+	cfg := Default()
+	cfg.Upstream.Mode = upstream.ModeWorker
+	cfg.Upstream.Worker = Worker{Host: "tunnel.example.workers.dev", Token: "secret"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("worker mode rejected a valid config: %v", err)
+	}
+	// The hop must reach the dialer, or the mode validates and then silently
+	// refuses every request.
+	hop := cfg.Upstream.Worker.Hop()
+	if hop.Host != "tunnel.example.workers.dev" || hop.Token != "secret" {
+		t.Errorf("hop = %+v, want the configured host and token", hop)
+	}
+	if hop.Egress != "direct" {
+		t.Errorf("egress = %q, want the direct default", hop.Egress)
+	}
+}
+
+func TestWorkerHostIsForgivingAboutAScheme(t *testing.T) {
+	// An operator pasting the Worker's dashboard URL is the obvious mistake, and
+	// a bare hostname is all this field can use. Stripping the scheme is kinder
+	// than failing, as long as the port and path are not silently kept.
+	cfg := Default()
+	cfg.Upstream.Mode = upstream.ModeWorker
+	cfg.Upstream.Worker = Worker{Host: "https://tunnel.example.workers.dev", Token: "secret"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a pasted https URL should be accepted: %v", err)
+	}
+	if got := cfg.Upstream.Worker.Host; got != "tunnel.example.workers.dev" {
+		t.Errorf("host = %q, want the scheme stripped", got)
+	}
+
+	cfg = Default()
+	cfg.Upstream.Mode = upstream.ModeWorker
+	cfg.Upstream.Worker = Worker{Host: "https://tunnel.example.workers.dev:8787/x", Token: "secret"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a URL with a port and path must still be rejected")
+	}
+}
+
+func TestExampleConfigLoads(t *testing.T) {
+	// The shipped example is the first thing a new user runs, so it has to keep
+	// passing as the config surface grows.
+	cfg, err := Load("../../config.example.json")
+	if err != nil {
+		t.Fatalf("config.example.json does not load: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("config.example.json does not validate: %v", err)
+	}
+	if got := cfg.Upstream.Worker.Host; got != "tunnel.example.workers.dev" {
+		t.Errorf("example worker host = %q, want the documented placeholder", got)
+	}
+}

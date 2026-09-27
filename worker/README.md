@@ -145,7 +145,7 @@ karena control plane sedang tidak dapat dihubungi.
 ## Pengembangan
 
 ```bash
-bun test          # 72 test, tanpa network
+bun test          # 81 test, tanpa network
 npx wrangler dev  # dijalankan di workerd dengan cloudflare:sockets sungguhan
 npx wrangler secret put TUNNEL_TOKEN
 npx wrangler secret put CONTROL_PLANE_TOKEN

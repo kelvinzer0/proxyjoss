@@ -97,6 +97,7 @@ func New(cfg config.Config, opts Options) (*App, error) {
 		Username:         cfg.Upstream.Username,
 		Password:         cfg.Upstream.Password,
 		UserAgent:        cfg.Upstream.UserAgent,
+		Worker:           cfg.Upstream.Worker.Hop(),
 	})
 
 	prober := &upstream.Prober{

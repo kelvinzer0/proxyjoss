@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -68,11 +69,17 @@ type Source struct {
 
 // Upstream controls how pool entries are dialled.
 type Upstream struct {
-	// Mode is auto, forward or relay.
+	// Mode is auto, forward, relay or worker.
 	//
 	//	auto     try a forward-proxy handshake, fall back to a raw relay
 	//	forward  require a real HTTP or SOCKS5 forward proxy
-	//	relay    open a raw socket and let the client speak TLS itself
+	//	relay    open a raw socket to the entry and let the client speak TLS
+	//	worker   reach the entry through a Cloudflare Worker tunnel
+	//
+	// relay and worker deliver the same bytes to the client. The difference is
+	// visibility: relay puts the destination's real SNI on the wire in the
+	// clear, worker hides it inside a tunnel whose own SNI is the Worker's
+	// domain. See the worker block below.
 	Mode upstream.Mode `json:"mode"`
 	// DialTimeout bounds the TCP connect to an entry.
 	DialTimeout Duration `json:"dial_timeout"`
@@ -97,6 +104,34 @@ type Upstream struct {
 	SNI string `json:"sni"`
 	// UserAgent is sent on HTTP CONNECT requests.
 	UserAgent string `json:"user_agent"`
+	// Worker configures the Cloudflare Worker hop used by mode "worker". It is
+	// ignored by every other mode.
+	Worker Worker `json:"worker"`
+}
+
+// Worker describes the Cloudflare Worker that carries entries.
+type Worker struct {
+	// Host is the Worker's own bare domain, for example
+	// "tunnel.example.workers.dev". It is presented as the SNI when dialling a
+	// Cloudflare edge address, which is the entire mechanism: the dial target
+	// and the SNI are chosen independently, so any live edge IP will serve this
+	// Worker as long as the SNI names it.
+	//
+	// A scheme, port or path here is rejected at startup. Each of them produces
+	// a request Cloudflare will not route, and the resulting failure looks like
+	// a dead edge rather than a typo.
+	Host string `json:"host"`
+	// Token is the shared secret the Worker expects in TUNNEL_TOKEN.
+	Token string `json:"token"`
+	// Timeout bounds one hop: the TLS handshake to the edge plus the WebSocket
+	// upgrade.
+	Timeout Duration `json:"timeout"`
+	// Egress is the Worker's own egress mode, which is "direct" unless the
+	// Worker has a control plane configured and you want it to choose an edge.
+	Egress string `json:"egress"`
+	// Selector is passed through to the Worker's control-plane lookup and is
+	// ignored while the Worker has no control plane.
+	Selector string `json:"selector"`
 }
 
 // Health configures the background prober.
@@ -151,6 +186,42 @@ type Admin struct {
 	// refuse every request, so the control plane is never left open by accident.
 	ControlToken string `json:"control_token"`
 }
+
+// normalised fills in the Worker defaults.
+func (w Worker) normalised() Worker {
+	if w.Timeout.Duration() <= 0 {
+		w.Timeout = Duration(10 * time.Second)
+	}
+	if w.Egress == "" {
+		w.Egress = "direct"
+	}
+	if w.Host != "" {
+		// A pasted dashboard URL is the obvious mistake, and a bare hostname is
+		// all this field can use, so the scheme alone is forgiven. A port, path,
+		// query or fragment is not: dropping any of those would quietly change
+		// which Worker the request reaches, so they are left in place for
+		// Validate to reject with a message that names the field.
+		if u, err := url.Parse(w.Host); err == nil && u.Scheme != "" && u.Hostname() != "" &&
+			u.Path == "" && u.Port() == "" && u.RawQuery == "" && u.Fragment == "" {
+			w.Host = u.Hostname()
+		}
+	}
+	return w
+}
+
+// hop converts the config block into the dialer's representation.
+func (w Worker) hop() upstream.WorkerHop {
+	return upstream.WorkerHop{
+		Host:     w.Host,
+		Token:    w.Token,
+		Timeout:  w.Timeout.Duration(),
+		Egress:   w.Egress,
+		Selector: w.Selector,
+	}
+}
+
+// Hop renders the Worker block for the dialer.
+func (w Worker) Hop() upstream.WorkerHop { return w.hop() }
 
 // Default returns a complete, runnable configuration.
 func Default() Config {
@@ -288,6 +359,14 @@ func (c *Config) Validate() error {
 	}
 	if c.Upstream.UserAgent == "" {
 		c.Upstream.UserAgent = "proxyjoss"
+	}
+	c.Upstream.Worker = c.Upstream.Worker.normalised()
+	if c.Upstream.Mode == upstream.ModeWorker {
+		// Validated eagerly: a missing hop would otherwise only surface as a
+		// failed client request, long after startup looked healthy.
+		if err := c.Upstream.Worker.hop().Validate(); err != nil {
+			return err
+		}
 	}
 
 	probeMode, err := upstream.ParseProbeMode(string(c.Health.Mode))

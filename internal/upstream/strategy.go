@@ -35,6 +35,9 @@ const (
 	// StrategyRelay opens a raw socket to the entry and pipes bytes, leaving
 	// any TLS to the client.
 	StrategyRelay Strategy = "relay"
+	// StrategyWorker reaches the entry through a Cloudflare Worker and then
+	// pipes bytes, also leaving TLS to the client.
+	StrategyWorker Strategy = "worker"
 )
 
 // ErrNoUsableEntry is returned when every candidate entry failed.

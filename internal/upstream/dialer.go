@@ -26,17 +26,29 @@ const (
 	// ModeRelay opens a raw socket to the entry and pipes bytes, leaving TLS
 	// to the client. This is what Cloudflare edge addresses need.
 	ModeRelay Mode = "relay"
+	// ModeWorker reaches the entry through a Cloudflare Worker rather than
+	// dialling it from this host.
+	//
+	// The bytes that reach the client are identical to ModeRelay; the only
+	// difference is whose IP the edge sees and, more importantly, that the
+	// destination's SNI never leaves this machine in the clear. See WorkerHop
+	// for why that is worth the extra hop.
+	//
+	// ModeWorker has no fallback to a direct dial. An Emilia entry only answers
+	// for zones Cloudflare serves, so a second attempt at the same address
+	// would fail the same way and just delay the next candidate.
+	ModeWorker Mode = "worker"
 )
 
 // ParseMode validates a configured mode name.
 func ParseMode(s string) (Mode, error) {
 	switch Mode(s) {
-	case ModeAuto, ModeForward, ModeRelay:
+	case ModeAuto, ModeForward, ModeRelay, ModeWorker:
 		return Mode(s), nil
 	case "":
 		return ModeAuto, nil
 	}
-	return "", errors.New("upstream mode must be auto, forward or relay")
+	return "", errors.New("upstream mode must be auto, forward, relay or worker")
 }
 
 // DialConfig configures the dialer.
@@ -67,6 +79,8 @@ type DialConfig struct {
 	Password string
 	// UserAgent is sent on HTTP CONNECT requests.
 	UserAgent string
+	// Worker configures the hop used by ModeWorker.
+	Worker WorkerHop
 }
 
 // withDefaults fills in usable values for unset fields.
@@ -80,6 +94,7 @@ func (c DialConfig) withDefaults() DialConfig {
 	if c.HandshakeTimeout <= 0 {
 		c.HandshakeTimeout = 8 * time.Second
 	}
+	c.Worker = c.Worker.withDefaults()
 	return c
 }
 
@@ -158,6 +173,17 @@ func (d *Dialer) Dial(ctx context.Context, candidates []domain.Proxy, requested 
 // therefore the right answer only when the client intends to speak TLS with its
 // own SNI.
 func (d *Dialer) dialEntry(ctx context.Context, entry domain.Proxy, target Target) (Strategy, net.Conn, error) {
+	// Worker mode replaces the whole strategy ladder: the entry is reached
+	// through the tunnel, so there is nothing on this host to negotiate a
+	// forward proxy with in the first place.
+	if d.cfg.Mode == ModeWorker {
+		conn, err := d.dialViaWorker(ctx, entry)
+		if err != nil {
+			return StrategyWorker, nil, err
+		}
+		return StrategyWorker, conn, nil
+	}
+
 	// The entry is the destination: a plain socket is the only thing that can
 	// work, and a forward handshake would be meaningless.
 	if entry.IP == target.Host && entry.Port == target.Port {

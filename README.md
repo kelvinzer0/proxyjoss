@@ -35,11 +35,91 @@ So the practical consequences:
 - `forward` and `auto` mode are **useless against this feed**; a connection to
   an entry is an HTTP server, not a proxy. They still work against a feed of
   real forward proxies, which is why the modes exist.
-- `relay` reaches the entry and lets the client speak to it directly. That is
-  the only mode that does anything useful here, and it only works for
-  destinations Cloudflare serves, because the client's own TLS carries the SNI.
-- Anything else needs the Worker, which reaches the destination from Cloudflare's
-  network and optionally pins the egress address it leaves from.
+- `relay` reaches the entry and lets the client speak to it directly. It works,
+  and it only works for destinations Cloudflare serves, because the client's own
+  TLS carries the SNI.
+- `worker` reaches the same entry through a Cloudflare Worker. The bytes are
+  identical; the difference is visibility, and it is worth having.
+
+### Why `worker` exists
+
+Dialling an entry directly already works, so `worker` is not about capability.
+It is about what leaves the machine.
+
+With `relay`, the TLS ClientHello that crosses the local network carries the
+**destination's real SNI in the clear.** Anything on the path can read it, and
+that is precisely what a filter looks for. With `worker`, the hop to the edge
+presents the **Worker's own domain** as its SNI, and the real destination name
+never appears outside the encrypted session:
+
+```
+relay    you ──── SNI: example.com ──────────────────▶ edge ──▶ origin
+worker   you ── SNI: tunnel.example.workers.dev ─▶ Worker ─▶ edge ─▶ origin
+                └──────── the real SNI is inside here ────────┘
+```
+
+The mechanism is that an Emilia address is a Cloudflare edge node announced
+inside an ISP's own IP space, so the dial target and the SNI are chosen
+independently. Dialing `10.0.0.1` with `ServerName` set to a routed zone makes
+that edge serve the Worker.
+
+```json
+"upstream": {
+  "mode": "worker",
+  "max_attempts": 12,
+  "sni": "example.com",
+  "worker": {
+    "host": "tunnel.example.workers.dev",
+    "token": "the same secret as the Worker's TUNNEL_TOKEN",
+    "timeout": "10s"
+  }
+}
+```
+
+`worker.host` is what makes the hop work, and it must be a bare hostname: a
+scheme is forgiven, a port or path is rejected.
+
+### What a destination actually sees
+
+A feed address is the **ingress** hop. It is not automatically the address the
+destination sees, and pretending otherwise is how a proxy ends up looking like it
+works while leaking.
+
+Measured against the live feed, one pinned entry at a time:
+
+| | |
+| --- | --- |
+| destination reported the feed address | 5 of 12 |
+| destination reported the edge's own egress | 7 of 12 |
+| destination reported this host's address | 0 of 12 |
+
+The two cases are the same mechanism. The edge node accepts the connection on the
+address from the feed, then opens its own connection to the origin, and it leaves
+from Cloudflare's space rather than from the address it was dialled on. Whether a
+given node happens to egress on the address it ingresses is up to that node.
+
+The row that matters is the third. If the host's own address ever appears, the
+request bypassed the proxy. Run the check rather than reasoning about it:
+
+```bash
+./scripts/verify-worker-exit-ip.sh /path/to/config.json 12
+```
+
+It pins each entry with a `proxy-<id>` selector, asks an echo service what source
+address it observed, and fails loudly if the host's own address shows up.
+
+### What `worker` cannot do
+
+- **Only destinations Cloudflare serves.** The edge has no certificate for
+  anything else, so the client's TLS fails. This is inherent to the feed, not to
+  this mode.
+- **No plaintext.** The hop is port 443 and the edge only speaks TLS, so a
+  plain `http://` request comes back as Cloudflare's own
+  `400 The plain HTTP request was sent to HTTPS port`. Use `https://`.
+- **The Worker itself cannot dial every address.** `connect()` is refused for
+  port 80 and for addresses inside Cloudflare's own published ranges, which is
+  why `example.com` and `1.1.1.1` fail from inside a Worker while the Emilia
+  addresses succeed.
 
 ## Install
 

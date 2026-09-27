@@ -18,7 +18,13 @@
     "username": "",
     "password": "",
     "sni": "",
-    "user_agent": "proxyjoss"
+    "user_agent": "proxyjoss",
+    "worker": {
+      "host": "tunnel.example.workers.dev",
+      "token": "",
+      "timeout": "10s",
+      "egress": "direct"
+    }
   },
   "health": {
     "enabled": true,

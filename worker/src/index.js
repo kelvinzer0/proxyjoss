@@ -19,15 +19,9 @@ import { checkTarget } from './guard.js';
 import { connectTarget } from './egress.js';
 import { relay } from './relay.js';
 import { clearCache } from './control.js';
+import { getRuntime } from './runtime.js';
 
 const EGRESS_MODES = new Set(['auto', 'edge', 'direct']);
-
-/** Picks the websocket pair, which differs between the module and service-worker syntax. */
-function webSocketPair() {
-  if (typeof WebSocketPair === 'function') return new WebSocketPair();
-  const { 0: client, 1: server } = Object.getOwnPropertyDescriptors(new WebSocket()).value;
-  return { 0: client, 1: server };
-}
 
 function json(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body, null, 2), {
@@ -76,14 +70,14 @@ async function handleTunnel(env, request, ctx) {
   const parsed = parseTunnelRequest(env, url, request.headers);
   if (!parsed.ok) return parsed.response;
 
-  // Resolved here rather than at module scope: importing cloudflare:sockets
-  // statically breaks tooling that runs the worker outside of workerd, and the
-  // informational routes never need it.
-  const connect = env.__connect || (await import('cloudflare:sockets')).connect;
+  // Resolved here rather than at module scope so the informational routes never
+  // touch workerd-only modules, which lets `bun test` load this file.
+  const { WebSocketPair, connect: defaultConnect } = await getRuntime();
+  const connect = env.__connect || defaultConnect;
 
-  const { 0: client, 1: server } = webSocketPair();
-  server.accept();
-
+  // Dial before building the WebSocket. A 101 response is only valid when it
+  // carries a socket, so a failed dial has to become a normal HTTP error. Doing
+  // it in this order also means a refused target costs no upgrade.
   const outcome = await connectTarget(
     env,
     { target: parsed.target, selector: parsed.selector, egress: parsed.egress },
@@ -91,16 +85,14 @@ async function handleTunnel(env, request, ctx) {
   );
 
   if (!outcome.socket) {
-    // The client is mid-handshake, so the reason goes over the socket rather
-    // than into an HTTP status it will never see.
-    sendError(server, outcome.reason || 'no egress available');
-    try {
-      client.close(1011, 'egress unavailable');
-    } catch {
-      // The client hung up first.
-    }
-    return new Response(null, { status: 101 });
+    return json(
+      { error: outcome.reason || 'no egress available', target: parsed.target, egress: parsed.egress },
+      502,
+    );
   }
+
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
 
   const state = {};
   // The response is returned immediately so the upgrade completes; the tunnel
@@ -130,30 +122,35 @@ async function handleTunnel(env, request, ctx) {
   return new Response(null, { status: 101, webSocket: client });
 }
 
-/** Tells a client, mid-handshake, why no egress could be opened. */
-function sendError(ws, reason) {
-  try {
-    ws.send(JSON.stringify({ error: reason }));
-    ws.close(1011, 'egress unavailable');
-  } catch {
-    // The socket is already gone.
-  }
-}
-
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/' || url.pathname === '/healthz') {
-      return handleInfo(env);
+    try {
+      if (url.pathname === '/' || url.pathname === '/healthz') {
+        return handleInfo(env);
+      }
+      if (url.pathname === '/tunnel') {
+        return await handleTunnel(env, request, ctx);
+      }
+      if (url.pathname === '/cache/flush') {
+        clearCache();
+        return json({ flushed: true });
+      }
+      return json({ error: 'not found' }, 404);
+    } catch (err) {
+      // Without this the whole request surfaces as Cloudflare's "error code:
+      // 1101", which names the symptom and not the cause. Anything thrown before
+      // the upgrade completes is a bug here, so say what it was.
+      console.error(
+        JSON.stringify({
+          event: 'request_failed',
+          path: url.pathname,
+          reason: String(err?.message || err),
+          stack: String(err?.stack || '').split('\n').slice(0, 4).join(' | '),
+        }),
+      );
+      return json({ error: 'internal error' }, 500);
     }
-    if (url.pathname === '/tunnel') {
-      return handleTunnel(env, request, ctx);
-    }
-    if (url.pathname === '/cache/flush') {
-      clearCache();
-      return json({ flushed: true });
-    }
-    return json({ error: 'not found' }, 404);
   },
 };

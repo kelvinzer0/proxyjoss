@@ -54,9 +54,19 @@ export function parseAddr(addr) {
   return { hostname: host, port };
 }
 
-/** Opens a socket and resolves once it is established, or rejects. */
+/**
+ * Opens a socket and resolves once it is established, or rejects.
+ *
+ * connect() itself can throw rather than reject, notably when the plan does not
+ * allow outbound TCP at all, so the call is guarded as well as the wait.
+ */
 async function open(connect, address, port, budgetMs) {
-  const socket = connect({ hostname: address, port });
+  let socket;
+  try {
+    socket = connect({ hostname: address, port });
+  } catch (err) {
+    throw new Error(String(err?.message || err));
+  }
   let timer;
   try {
     await Promise.race([
@@ -103,9 +113,23 @@ async function tryEdges(connect, candidates, results, deadline) {
  *
  * `egress` is "auto" (edge when one is available, then direct), "edge" (edge
  * only, fail the request if none work) or "direct".
+ *
+ * This never throws. A failure anywhere in the egress path comes back as
+ * `{ socket: null, reason }`, because a bug in here must not turn into an opaque
+ * 500 that tells the client nothing, and because the caller has already
+ * completed the WebSocket handshake by the time the socket is requested.
  */
 export async function connectTarget(env, { target, selector, egress = 'auto' }, connect) {
   const results = [];
+  try {
+    return await openEgress(env, { target, selector, egress }, connect, results);
+  } catch (err) {
+    void reportResults(env, results);
+    return { socket: null, reason: `egress failed: ${String(err?.message || err)}`, results };
+  }
+}
+
+async function openEgress(env, { target, selector, egress }, connect, results) {
   const wantEdge = egress === 'auto' || egress === 'edge';
 
   let candidates = [];

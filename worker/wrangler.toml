@@ -2,19 +2,20 @@ name = "proxyjoss-tunnel"
 main = "src/index.js"
 compatibility_date = "2026-01-01"
 
-# The tunnel holds a Cloudflare TCP socket open per client connection. Workers
-# cap concurrent TCP connections per isolate, so keep the limit explicit rather
-# than discovering it in production.
-limits = { cpu_ms = 30000 }
+# No CPU limit is declared on purpose: the Free plan rejects the setting
+# outright, and the default already applies. A tunnel that just moves bytes uses
+# very little CPU per chunk, so raising it would buy little and block Free.
 
 [observability]
 enabled = true
 
 # Secrets are set out of band, never committed:
-#   wrangler secret put TUNNEL_TOKEN
-#   wrangler secret put CONTROL_PLANE_TOKEN
+#   wrangler secret put TUNNEL_TOKEN --config wrangler.toml
+#   wrangler secret put CONTROL_PLANE_TOKEN --config wrangler.toml
 #
-# CONTROL_PLANE_URL is a plain var because it is not a secret.
+# CONTROL_PLANE_URL is a plain var because it is not a secret. It is empty by
+# default, which leaves the worker in direct mode: it reaches every destination
+# from Cloudflare's network but has no egress list to pin.
 [vars]
 CONTROL_PLANE_URL = ""
 CONTROL_PLANE_TTL_MS = "30000"
